@@ -6,6 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "polars>=1.29.0",
+    "polars-talib>=0.1.5",
     "pydantic>=2.11.4",
+    "trading-helpers",
     "typing>=3.10.0.0",
 ]
+
+[tool.uv.sources]
+trading-helpers = { git = "https://github.com/craftsmandigital/trading_helpers.git", rev = "0.02" }
