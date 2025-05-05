@@ -1,9 +1,13 @@
 import polars as pl
 from polars import DataFrame, Expr
-from pydantic import BaseModel, field_validator, ValidationError, ConfigDict
-# Import Optional and Dict
-from typing import Set, Any, Optional, Dict
-
+from pydantic import (
+    BaseModel,
+    field_validator,
+    model_validator, # Keep model_validator
+    ValidationError,
+    ConfigDict
+)
+from typing import Set, Any, Optional, List, Dict
 # Define the expected schema for the DataFrame
 REQUIRED_OHLC_COLUMNS: Set[str] = {
     'ticker',
@@ -23,12 +27,23 @@ class GeneralTrader(BaseModel):
     """
     A Pydantic model representing a general trading setup.
 
+    The internal df_ohlc DataFrame can be modified by methods like add_columns.
+
     Attributes:
         df_ohlc (pl.DataFrame): A Polars DataFrame containing OHLCV data
-                                with specific required columns.
+
+                                with specific required columns. This DataFrame
+                                will be modified by methods like add_columns.
         initialFilter (Optional[pl.Expr]): An optional Polars expression used
                                            for initial filtering of the data.
                                            Defaults to None.
+        ohlcColumnsToUse (Optional[List[str]]): An optional list of column names
+                                                from df_ohlc to specifically track
+                                                or use. If provided, all names
+                                                must exist in df_ohlc. Defaults
+                                                to None.
+                                                ticker and date is always present.
+                                                Return all collums if None
     """
 
     # Configure Pydantic to allow arbitrary types like Polars DataFrame and Expr
@@ -36,6 +51,7 @@ class GeneralTrader(BaseModel):
 
     df_ohlc: DataFrame
     initialFilter: Optional[Expr] = None
+    ohlcColumnsToUse: Optional[list[str]] = None # ticker and date is always present. Return all collums if None
 
     @field_validator('df_ohlc')
     @classmethod
@@ -61,6 +77,49 @@ class GeneralTrader(BaseModel):
             raise TypeError('initialFilter must be a Polars Expression or None')
         return v
 
+
+
+    # --- Model Validator (runs after field validators) ---
+    @model_validator(mode='after')
+    def process_ohlc_columns_to_use(self) -> 'GeneralTrader':
+        """
+        1. Validates that columns in ohlcColumnsToUse exist in the input df_ohlc.
+        2. If ohlcColumnsToUse is provided, subsets self.df_ohlc to include
+           only 'ticker', 'date', and the specified columns.
+        """
+        columns_to_use = self.ohlcColumnsToUse
+        # self.df_ohlc here is the *cloned* DataFrame from the field validator
+        df = self.df_ohlc
+
+        if columns_to_use is not None:
+            # Step 1: Validate existence of specified columns in the original df
+            actual_columns_set = set(df.columns)
+            specified_columns_set = set(columns_to_use)
+
+            if not specified_columns_set.issubset(actual_columns_set):
+                invalid_columns = specified_columns_set - actual_columns_set
+                raise ValueError(
+                    f"Columns specified in 'ohlcColumnsToUse' do not exist "
+                    f"in the provided df_ohlc: {invalid_columns}"
+                )
+
+            # Step 2: Perform the selection if validation passed
+            # Define base columns that are always kept
+            base_columns = {'ticker', 'date'}
+            # Combine base columns with user-specified columns (set handles duplicates)
+            final_columns_to_select_set = base_columns.union(specified_columns_set)
+            # Convert back to list for Polars select
+            final_columns_to_select_list = list(final_columns_to_select_set)
+
+            # Reassign self.df_ohlc to the selected subset
+            # This modifies the DataFrame stored in the instance
+            self.df_ohlc = df.select(final_columns_to_select_list)
+
+        # Must return self for 'after' model validators
+        return self
+
+
+    
 
 # --- Method to Modify df_ohlc ---
     # Update return type hint to 'GeneralTrader' (using quotes for forward reference)
