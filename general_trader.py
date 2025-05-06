@@ -124,37 +124,76 @@ class GeneralTrader(BaseModel):
 
 # --- Method to Modify df_ohlc ---
     # Update return type hint to 'GeneralTrader' (using quotes for forward reference)
-    def add_columns(self, column_definitions: Dict[str, pl.Expr]) -> 'GeneralTrader':
+    def add_columns_and_prefilter( # Renamed method
+        self,
+        column_definitions: Optional[Dict[str, pl.Expr]] = None, # Optional
+        filter_expr: Optional[pl.Expr] = None
+    ) -> 'GeneralTrader':
         """
-        Adds new columns to the internal df_ohlc DataFrame in place.
+        Optionally adds new columns and/or filters the internal df_ohlc DataFrame.
+
+        At least one of 'column_definitions' (if provided, must not be empty)
+        or 'filter_expr' must be supplied.
+
+        The filter is applied *after* new columns (if any) are added, allowing
+        the filter expression to reference these newly created columns.
 
         Args:
-            column_definitions: A dictionary where keys are the names for the
-                                new columns (str) and values are the Polars
-                                expressions (pl.Expr) used to compute them.
+            column_definitions: Optional dictionary of
+                                {new_column_name: polars_expression}.
+                                If None or empty, no columns are added.
+            filter_expr: Optional Polars expression to filter the DataFrame.
+                         If None, no filter is applied.
 
         Returns:
-            The GeneralTrader instance itself (self), allowing for method chaining.
+            The GeneralTrader instance (self) for method chaining.
 
         Raises:
-            TypeError: If input validation fails.
-            pl.exceptions.*: Polars exceptions during expression evaluation.
+            ValueError: If neither column_definitions (non-empty) nor
+                        filter_expr are provided.
+            TypeError: If input validation fails for parameters.
+            pl.exceptions.*: Polars exceptions during expression evaluation or filtering.
         """
-        # --- Input Validation ---
-        if not isinstance(column_definitions, dict):
-            raise TypeError("column_definitions must be a dictionary.")
-        if not all(isinstance(k, str) for k in column_definitions.keys()):
-            raise TypeError("All keys in column_definitions must be strings.")
-        if not all(isinstance(v, pl.Expr) for v in column_definitions.values()):
-             raise TypeError("All values in column_definitions must be Polars Expressions.")
+        # --- Constraint Check: At least one operation must be requested ---
+        # A "column operation" exists if column_definitions is not None AND not an empty dict
+        has_column_operation = bool(column_definitions) # True if not None and not empty
+        has_filter_operation = filter_expr is not None
 
-        # --- Core Logic: Modify self.df_ohlc ---
+        if not has_column_operation and not has_filter_operation:
+            raise ValueError(
+                "At least one of 'column_definitions' (non-empty) or 'filter_expr' "
+                "must be provided to add_columns_and_prefilter."
+            )
+
+        # --- Input Validation for provided parameters ---
+        if column_definitions is not None: # If None, it's fine. If not None, validate its content.
+            if not isinstance(column_definitions, dict):
+                # This case should ideally not be hit if has_column_operation is true,
+                # but good for robustness.
+                raise TypeError("column_definitions must be a dictionary or None.")
+            if not all(isinstance(k, str) for k in column_definitions.keys()):
+                raise TypeError("All keys in column_definitions must be strings.")
+            if not all(isinstance(v, pl.Expr) for v in column_definitions.values()):
+                raise TypeError("All values in column_definitions must be Polars Expressions.")
+            # If column_definitions is an empty dict, has_column_operation will be False.
+
+        if filter_expr is not None and not isinstance(filter_expr, pl.Expr):
+            raise TypeError("The 'filter_expr' parameter must be a Polars Expression or None.")
+
+        # --- Core Logic ---
         try:
-            self.df_ohlc = self.df_ohlc.with_columns(**column_definitions)
+            # Step 1: Add new columns if definitions are provided and not empty
+            if has_column_operation: # Relies on bool(column_definitions)
+                self.df_ohlc = self.df_ohlc.with_columns(**column_definitions)
+
+            # Step 2: Apply the filter if it was provided
+            if has_filter_operation:
+                self.df_ohlc = self.df_ohlc.filter(filter_expr)
+
         except Exception as e:
-            print(f"Error applying expressions with with_columns: {e}")
+            print(f"Error during add_columns_and_prefilter (adding columns or filtering): {e}")
             raise
 
-        # Return self to allow chaining
-        return self
+        return self 
+
 
